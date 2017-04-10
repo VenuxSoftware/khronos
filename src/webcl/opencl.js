@@ -3,82 +3,78 @@
   Process: API generation
 */
 
-// Copyright 2009 the Sputnik authors.  All rights reserved.
+// Copyright (C) 2015 André Bargull. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
-function Test262Error(message) {
-  this.message = message;
-}
-
-Test262Error.prototype.toString = function () {
-  return "Test262 Error: " + this.message;
-};
-
-function testFailed(message) {
-  throw new Test262Error(message);
-}
-
-function testPrint(message) {
-
-}
+/**
+ * Array containing every typed array constructor.
+ */
+var typedArrayConstructors = [
+  Float64Array,
+  Float32Array,
+  Int32Array,
+  Int16Array,
+  Int8Array,
+  Uint32Array,
+  Uint16Array,
+  Uint8Array,
+  Uint8ClampedArray
+];
 
 /**
- * It is not yet clear that runTestCase should pass the global object
- * as the 'this' binding in the call to testcase.
+ * The %TypedArray% intrinsic constructor function.
  */
-var runTestCase = (function(global) {
-  return function(testcase) {
-    if (!testcase.call(global)) {
-      testFailed('test function returned falsy');
-    }
-  };
-})(this);
+var TypedArray = Object.getPrototypeOf(Int8Array);
 
-function assertTruthy(value) {
-  if (!value) {
-    testFailed('test return falsy');
+/**
+ * Callback for testing a typed array constructor.
+ *
+ * @callback typedArrayConstructorCallback
+ * @param {Function} Constructor the constructor object to test with.
+ */
+
+/**
+ * Calls the provided function for every typed array constructor.
+ *
+ * @param {typedArrayConstructorCallback} f - the function to call for each typed array constructor.
+ * @param {Array} selected - An optional Array with filtered typed arrays
+ */
+function testWithTypedArrayConstructors(f, selected) {
+  var constructors = selected || typedArrayConstructors;
+  for (var i = 0; i < constructors.length; ++i) {
+    var constructor = constructors[i];
+    try {
+      f(constructor);
+    } catch (e) {
+      e.message += " (Testing with " + constructor.name + ".)";
+      throw e;
+    }
   }
 }
 
-
 /**
- * falsy means we expect no error.
- * truthy means we expect some error.
- * A non-empty string means we expect an error whose .name is that string.
+ * Helper for conversion operations on TypedArrays, the expected values
+ * properties are indexed in order to match the respective value for each
+ * TypedArray constructor
+ * @param  {Function} fn - the function to call for each constructor and value.
+ *                         will be called with the constructor, value, expected
+ *                         value, and a initial value that can be used to avoid
+ *                         a false positive with an equivalent expected value.
  */
-var expectedErrorName = false;
+function testTypedArrayConversions(byteConversionValues, fn) {
+  var values = byteConversionValues.values;
+  var expected = byteConversionValues.expected;
 
-/**
- * What was thrown, or the string 'Falsy' if something falsy was thrown.
- * null if test completed normally.
- */
-var actualError = null;
+  testWithTypedArrayConstructors(function(TA) {
+    var name = TA.name.slice(0, -5);
 
-function testStarted(expectedErrName) {
-  expectedErrorName = expectedErrName;
-}
-
-function testFinished() {
-  var actualErrorName = actualError && (actualError.name ||
-                                        'SomethingThrown');
-  if (actualErrorName) {
-    if (expectedErrorName) {
-      if (typeof expectedErrorName === 'string') {
-        if (expectedErrorName === actualErrorName) {
-          return;
-        }
-        testFailed('Threw ' + actualErrorName +
-                   ' instead of ' + expectedErrorName);
+    return values.forEach(function(value, index) {
+      var exp = expected[name][index];
+      var initial = 0;
+      if (exp === 0) {
+        initial = 1;
       }
-      return;
-    }
-    throw actualError;
-  }
-  if (expectedErrorName) {
-    if (typeof expectedErrorName === 'string') {
-      testFailed('Completed instead of throwing ' +
-                 expectedErrorName);
-    }
-    testFailed('Completed instead of throwing');
-  }
+      fn(TA, value, exp, initial);
+    });
+  });
 }
