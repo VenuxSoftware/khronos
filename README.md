@@ -1,10 +1,16 @@
-# Khronos Group Standards
+## Khronos Group
 
-**prototype software! not yet working code**
+**This is an alpha software. Not recommended to use at this point.**
 
-The Khronos Group is a not for profit industry consortium creating open standards for the authoring and acceleration of parallel computing, graphics, dynamic media, computer vision and sensor processing on a wide variety of platforms and devices. All Khronos members are able to contribute to the development of Khronos API specifications, are able to accelerate the delivery of their cutting-edge 3D platforms and applications through early access to specification drafts and conformance tests.
+	Status: Alpha (phase 2)
+	-
+	Phases
+	  1. Prototype [Layout generation               - Nov 13, 2015 .. May 1, 2017]
+	  2. Alpha     [API & code generation           - May  1, 2017 .. ]
+	  3. Beta      [Code generation & optimizations - .. ]
+	  4. RC1       [Release candidate 1             - .. ]
+	  5. RC2       [Release candidate 2             - .. ]
+	  6. RC3       [Release candidate 3             - .. ]
+	  7. Release   [Public release v1.0.0           - .. ]
 
- - [OpenGL](https://github.com/VenuxSoftware/khronos/tree/master/src/opengl)
- - [OpenVG](https://github.com/VenuxSoftware/khronos/tree/master/src/openvg)
- - [OpenWF](https://github.com/VenuxSoftware/khronos/tree/master/src/openwf)
- - [WebCL](https://github.com/VenuxSoftware/khronos/tree/master/src/webcl)
+*Note: Detailed documentation will be available once the code base matures to **Beta (Phase 3)** stage.*
