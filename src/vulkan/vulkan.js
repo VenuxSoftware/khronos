@@ -1,13 +1,6 @@
-/*
-  Status: prototype
-  Process: API generation
-*/
+var stripAnsi = require('strip-ansi')
+var wcwidth = require('wcwidth')
 
-/*---
-description: Fails by calling $ERROR
-expected:
-  pass: false
-  message: failure message
----*/
-
-$ERROR('failure message');
+module.exports = function(str) {
+  return wcwidth(stripAnsi(str))
+}
