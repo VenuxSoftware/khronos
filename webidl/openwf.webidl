@@ -1,4 +1,4 @@
 // WebIDL Level 2
 // Initial configuration
-interface opengl() {
+interface openwf() {
 }
