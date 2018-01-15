@@ -1,193 +1,191 @@
-"use strict"
+'use strict'
+var fs = require('graceful-fs')
+var readCmdShim = require('read-cmd-shim')
+var isWindows = require('../lib/utils/is-windows.js')
+var extend = Object.assign || require('util')._extend
+var Bluebird = require('bluebird')
 
-var wcwidth = require('./width')
-
-/**
- * repeat string `str` up to total length of `len`
- *
- * @param String str string to repeat
- * @param Number len total length of output string
- */
-
-function repeatString(str, len) {
-  return Array.apply(null, {length: len + 1}).join(str).slice(0, len)
+// cheesy hackaround for test deps (read: nock) that rely on setImmediate
+if (!global.setImmediate || !require('timers').setImmediate) {
+  require('timers').setImmediate = global.setImmediate = function () {
+    var args = [arguments[0], 0].concat([].slice.call(arguments, 1))
+    setTimeout.apply(this, args)
+  }
 }
 
-/**
- * Pad `str` up to total length `max` with `chr`.
- * If `str` is longer than `max`, padRight will return `str` unaltered.
- *
- * @param String str string to pad
- * @param Number max total length of output string
- * @param String chr optional. Character to pad with. default: ' '
- * @return String padded str
- */
+var spawn = require('child_process').spawn
+var path = require('path')
 
-function padRight(str, max, chr) {
-  str = str != null ? str : ''
-  str = String(str)
-  var length = max - wcwidth(str)
-  if (length <= 0) return str
-  return str + repeatString(chr || ' ', length)
-}
+var port = exports.port = 1337
+exports.registry = 'http://localhost:' + port
+const ourenv = {}
+ourenv.npm_config_loglevel = 'error'
+ourenv.npm_config_progress = 'false'
 
-/**
- * Pad `str` up to total length `max` with `chr`.
- * If `str` is longer than `max`, padCenter will return `str` unaltered.
- *
- * @param String str string to pad
- * @param Number max total length of output string
- * @param String chr optional. Character to pad with. default: ' '
- * @return String padded str
- */
+var npm_config_cache = path.resolve(__dirname, 'npm_cache')
+ourenv.npm_config_cache = exports.npm_config_cache = npm_config_cache
+ourenv.npm_config_userconfig = exports.npm_config_userconfig = path.join(__dirname, 'fixtures', 'config', 'userconfig')
+ourenv.npm_config_globalconfig = exports.npm_config_globalconfig = path.join(__dirname, 'fixtures', 'config', 'globalconfig')
+ourenv.npm_config_global_style = 'false'
+ourenv.npm_config_legacy_bundling = 'false'
+ourenv.npm_config_fetch_retries = '0'
+ourenv.random_env_var = 'foo'
+// suppress warnings about using a prerelease version of node
+ourenv.npm_config_node_version = process.version.replace(/-.*$/, '')
+for (let key of Object.keys(ourenv)) process.env[key] = ourenv[key]
 
-function padCenter(str, max, chr) {
-  str = str != null ? str : ''
-  str = String(str)
-  var length = max - wcwidth(str)
-  if (length <= 0) return str
-  var lengthLeft = Math.floor(length/2)
-  var lengthRight = length - lengthLeft
-  return repeatString(chr || ' ', lengthLeft) + str + repeatString(chr || ' ', lengthRight)
-}
+var bin = exports.bin = require.resolve('../bin/npm-cli.js')
 
-/**
- * Pad `str` up to total length `max` with `chr`, on the left.
- * If `str` is longer than `max`, padRight will return `str` unaltered.
- *
- * @param String str string to pad
- * @param Number max total length of output string
- * @param String chr optional. Character to pad with. default: ' '
- * @return String padded str
- */
+var chain = require('slide').chain
+var once = require('once')
 
-function padLeft(str, max, chr) {
-  str = str != null ? str : ''
-  str = String(str)
-  var length = max - wcwidth(str)
-  if (length <= 0) return str
-  return repeatString(chr || ' ', length) + str
-}
+var nodeBin = exports.nodeBin = process.env.npm_node_execpath || process.env.NODE || process.execPath
 
-/**
- * Split a String `str` into lines of maxiumum length `max`.
- * Splits on word boundaries. Preserves existing new lines.
- *
- * @param String str string to split
- * @param Number max length of each line
- * @return Array Array containing lines.
- */
-
-function splitIntoLines(str, max) {
-  function _splitIntoLines(str, max) {
-    return str.trim().split(' ').reduce(function(lines, word) {
-      var line = lines[lines.length - 1]
-      if (line && wcwidth(line.join(' ')) + wcwidth(word) < max) {
-        lines[lines.length - 1].push(word) // add to line
+exports.npm = function (cmd, opts, cb) {
+  if (!cb) {
+    var prom = new Bluebird((resolve, reject) => {
+      cb = function (err, code, stdout, stderr) {
+        if (err) return reject(err)
+        return resolve([code, stdout, stderr])
       }
-      else lines.push([word]) // new line
-      return lines
-    }, []).map(function(l) {
-      return l.join(' ')
     })
   }
-  return str.split('\n').map(function(str) {
-    return _splitIntoLines(str, max)
-  }).reduce(function(lines, line) {
-    return lines.concat(line)
-  }, [])
-}
+  cb = once(cb)
+  cmd = [bin].concat(cmd)
+  opts = extend({}, opts || {})
 
-/**
- * Add spaces and `truncationChar` between words of
- * `str` which are longer than `max`.
- *
- * @param String str string to split
- * @param Number max length of each line
- * @param Number truncationChar character to append to split words
- * @return String
- */
-
-function splitLongWords(str, max, truncationChar) {
-  str = str.trim()
-  var result = []
-  var words = str.split(' ')
-  var remainder = ''
-
-  var truncationWidth = wcwidth(truncationChar)
-
-  while (remainder || words.length) {
-    if (remainder) {
-      var word = remainder
-      remainder = ''
-    } else {
-      var word = words.shift()
-    }
-
-    if (wcwidth(word) > max) {
-      // slice is based on length no wcwidth
-      var i = 0
-      var wwidth = 0
-      var limit = max - truncationWidth
-      while (i < word.length) {
-        var w = wcwidth(word.charAt(i))
-        if (w + wwidth > limit) {
-          break
-        }
-        wwidth += w
-        ++i
-      }
-
-      remainder = word.slice(i) // get remainder
-      // save remainder for next loop
-
-      word = word.slice(0, i) // grab truncated word
-      word += truncationChar // add trailing … or whatever
-    }
-    result.push(word)
+  opts.env = opts.env || process.env
+  if (opts.env._storage) opts.env = Object.assign({}, opts.env._storage)
+  if (!opts.env.npm_config_cache) {
+    opts.env.npm_config_cache = npm_config_cache
+  }
+  if (!opts.env.npm_config_send_metrics) {
+    opts.env.npm_config_send_metrics = 'false'
   }
 
-  return result.join(' ')
-}
+  nodeBin = opts.nodeExecPath || nodeBin
 
+  var stdout = ''
+  var stderr = ''
+  var child = spawn(nodeBin, cmd, opts)
 
-/**
- * Truncate `str` into total width `max`
- * If `str` is shorter than `max`,  will return `str` unaltered.
- *
- * @param String str string to truncated
- * @param Number max total wcwidth of output string
- * @return String truncated str
- */
-
-function truncateString(str, max) {
-
-  str = str != null ? str : ''
-  str = String(str)
-
-  if(max == Infinity) return str
-
-  var i = 0
-  var wwidth = 0
-  while (i < str.length) {
-    var w = wcwidth(str.charAt(i))
-    if(w + wwidth > max)
-      break
-    wwidth += w
-    ++i
+  if (child.stderr) {
+    child.stderr.on('data', function (chunk) {
+      stderr += chunk
+    })
   }
-  return str.slice(0, i)
+
+  if (child.stdout) {
+    child.stdout.on('data', function (chunk) {
+      stdout += chunk
+    })
+  }
+
+  child.on('error', cb)
+
+  child.on('close', function (code) {
+    cb(null, code, stdout, stderr)
+  })
+  return prom || child
 }
 
+exports.makeGitRepo = function (params, cb) {
+  // git must be called after npm.load because it uses config
+  var git = require('../lib/utils/git.js')
 
+  var root = params.path || process.cwd()
+  var user = params.user || 'PhantomFaker'
+  var email = params.email || 'nope@not.real'
+  var added = params.added || ['package.json']
+  var message = params.message || 'stub repo'
 
-/**
- * Exports
- */
+  var opts = { cwd: root, env: { PATH: process.env.PATH } }
+  var commands = [
+    git.chainableExec(['init'], opts),
+    git.chainableExec(['config', 'user.name', user], opts),
+    git.chainableExec(['config', 'user.email', email], opts),
+    git.chainableExec(['add'].concat(added), opts),
+    git.chainableExec(['commit', '-m', message], opts)
+  ]
 
-module.exports.padRight = padRight
-module.exports.padCenter = padCenter
-module.exports.padLeft = padLeft
-module.exports.splitIntoLines = splitIntoLines
-module.exports.splitLongWords = splitLongWords
-module.exports.truncateString = truncateString
+  if (Array.isArray(params.commands)) {
+    commands = commands.concat(params.commands)
+  }
+
+  chain(commands, cb)
+}
+
+exports.readBinLink = function (path) {
+  if (isWindows) {
+    return readCmdShim.sync(path)
+  } else {
+    return fs.readlinkSync(path)
+  }
+}
+
+exports.skipIfWindows = function (why) {
+  if (!isWindows) return
+  console.log('1..1')
+  if (!why) why = 'this test not available on windows'
+  console.log('ok 1 # skip ' + why)
+  process.exit(0)
+}
+
+exports.pendIfWindows = function (why) {
+  if (!isWindows) return
+  console.log('1..1')
+  if (!why) why = 'this test is pending further changes on windows'
+  console.log('not ok 1 # todo ' + why)
+  process.exit(0)
+}
+
+exports.newEnv = function () {
+  return new Environment(process.env)
+}
+
+exports.emptyEnv = function () {
+  const filtered = {}
+  for (let key of Object.keys(process.env)) {
+    if (!/^npm_/.test(key)) filtered[key] = process.env[key]
+  }
+  for (let key of Object.keys(ourenv)) {
+    filtered[key] = ourenv[key]
+  }
+  return new Environment(filtered)
+}
+
+function Environment (env) {
+  if (env instanceof Environment) return env.clone()
+
+  Object.defineProperty(this, '_storage', {
+    value: extend({}, env)
+  })
+}
+Environment.prototype = {}
+
+Environment.prototype.delete = function (key) {
+  var args = Array.isArray(key) ? key : arguments
+  var ii
+  for (ii = 0; ii < args.length; ++ii) {
+    delete this._storage[args[ii]]
+  }
+  return this
+}
+
+Environment.prototype.clone = function () {
+  return new Environment(this._storage)
+}
+
+Environment.prototype.extend = function (env) {
+  var self = this.clone()
+  var args = Array.isArray(env) ? env : arguments
+  var ii
+  for (ii = 0; ii < args.length; ++ii) {
+    var arg = args[ii]
+    if (!arg) continue
+    Object.keys(arg).forEach(function (name) {
+      self._storage[name] = arg[name]
+    })
+  }
+  return self
+}
