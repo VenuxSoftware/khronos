@@ -1,34 +1,133 @@
-var defaults = require('./'),
-    test = require('tap').test;
+/**
+ * refer:
+ *   * @atimb "Real keep-alive HTTP agent": https://gist.github.com/2963672
+ *   * https://github.com/joyent/node/blob/master/lib/http.js
+ *   * https://github.com/joyent/node/blob/master/lib/https.js
+ *   * https://github.com/joyent/node/blob/master/lib/_http_agent.js
+ */
 
-test("ensure options is an object", function(t) {
-  var options = defaults(false, { a : true });
-  t.ok(options.a);
-  t.end()
-});
+'use strict';
 
-test("ensure defaults override keys", function(t) {
-  var result = defaults({}, { a: false, b: true });
-  t.ok(result.b, 'b merges over undefined');
-  t.equal(result.a, false, 'a merges over undefined');
-  t.end();
-});
+const OriginalAgent = require('./_http_agent').Agent;
+const ms = require('humanize-ms');
 
-test("ensure defined keys are not overwritten", function(t) {
-  var result = defaults({ b: false }, { a: false, b: true });
-  t.equal(result.b, false, 'b not merged');
-  t.equal(result.a, false, 'a merges over undefined');
-  t.end();
-});
+class Agent extends OriginalAgent {
+  constructor(options) {
+    options = options || {};
+    options.keepAlive = options.keepAlive !== false;
+    // default is keep-alive and 15s free socket timeout
+    if (options.freeSocketKeepAliveTimeout === undefined) {
+      options.freeSocketKeepAliveTimeout = 15000;
+    }
+    // Legacy API: keepAliveTimeout should be rename to `freeSocketKeepAliveTimeout`
+    if (options.keepAliveTimeout) {
+      options.freeSocketKeepAliveTimeout = options.keepAliveTimeout;
+    }
+    options.freeSocketKeepAliveTimeout = ms(options.freeSocketKeepAliveTimeout);
 
-test("ensure defaults clone nested objects", function(t) {
-  var d = { a: [1,2,3], b: { hello : 'world' } };
-  var result = defaults({}, d);
-  t.equal(result.a.length, 3, 'objects should be clones');
-  t.ok(result.a !== d.a, 'objects should be clones');
+    // Sets the socket to timeout after timeout milliseconds of inactivity on the socket.
+    // By default is double free socket keepalive timeout.
+    if (options.timeout === undefined) {
+      options.timeout = options.freeSocketKeepAliveTimeout * 2;
+      // make sure socket default inactivity timeout >= 30s
+      if (options.timeout < 30000) {
+        options.timeout = 30000;
+      }
+    }
+    options.timeout = ms(options.timeout);
 
-  t.equal(Object.keys(result.b).length, 1, 'objects should be clones');
-  t.ok(result.b !== d.b, 'objects should be clones');
-  t.end();
-});
+    super(options);
 
+    this.createSocketCount = 0;
+    this.createSocketCountLastCheck = 0;
+
+    this.createSocketErrorCount = 0;
+    this.createSocketErrorCountLastCheck = 0;
+
+    this.closeSocketCount = 0;
+    this.closeSocketCountLastCheck = 0;
+
+    // socket error event count
+    this.errorSocketCount = 0;
+    this.errorSocketCountLastCheck = 0;
+
+    this.requestCount = 0;
+    this.requestCountLastCheck = 0;
+
+    this.timeoutSocketCount = 0;
+    this.timeoutSocketCountLastCheck = 0;
+
+    this.on('free', s => {
+      this.requestCount++;
+      // last enter free queue timestamp
+      s.lastFreeTime = Date.now();
+    });
+    this.on('timeout', () => {
+      this.timeoutSocketCount++;
+    });
+    this.on('close', () => {
+      this.closeSocketCount++;
+    });
+    this.on('error', () => {
+      this.errorSocketCount++;
+    });
+  }
+
+  createSocket(req, options, cb) {
+    super.createSocket(req, options, (err, socket) => {
+      if (err) {
+        this.createSocketErrorCount++;
+        return cb(err);
+      }
+      if (this.keepAlive) {
+        // Disable Nagle's algorithm: http://blog.caustik.com/2012/04/08/scaling-node-js-to-100k-concurrent-connections/
+        // https://fengmk2.com/benchmark/nagle-algorithm-delayed-ack-mock.html
+        socket.setNoDelay(true);
+      }
+      this.createSocketCount++;
+      cb(null, socket);
+    });
+  }
+
+  get statusChanged() {
+    const changed = this.createSocketCount !== this.createSocketCountLastCheck ||
+      this.createSocketErrorCount !== this.createSocketErrorCountLastCheck ||
+      this.closeSocketCount !== this.closeSocketCountLastCheck ||
+      this.errorSocketCount !== this.errorSocketCountLastCheck ||
+      this.timeoutSocketCount !== this.timeoutSocketCountLastCheck ||
+      this.requestCount !== this.requestCountLastCheck;
+    if (changed) {
+      this.createSocketCountLastCheck = this.createSocketCount;
+      this.createSocketErrorCountLastCheck = this.createSocketErrorCount;
+      this.closeSocketCountLastCheck = this.closeSocketCount;
+      this.errorSocketCountLastCheck = this.errorSocketCount;
+      this.timeoutSocketCountLastCheck = this.timeoutSocketCount;
+      this.requestCountLastCheck = this.requestCount;
+    }
+    return changed;
+  }
+
+  getCurrentStatus() {
+    return {
+      createSocketCount: this.createSocketCount,
+      createSocketErrorCount: this.createSocketErrorCount,
+      closeSocketCount: this.closeSocketCount,
+      errorSocketCount: this.errorSocketCount,
+      timeoutSocketCount: this.timeoutSocketCount,
+      requestCount: this.requestCount,
+      freeSockets: inspect(this.freeSockets),
+      sockets: inspect(this.sockets),
+      requests: inspect(this.requests),
+    };
+  }
+}
+
+module.exports = Agent;
+
+function inspect(obj) {
+  const res = {};
+  for (const key in obj) {
+    res[key] = obj[key].length;
+  }
+  return res;
+}
